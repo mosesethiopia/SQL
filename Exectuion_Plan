@@ -1,0 +1,59 @@
+
+	-- Get the # of CPUs
+	SELECT	(cpu_count / hyperthread_ratio) AS Number_of_PhysicalCPUs
+		,	CPU_Count AS Number_of_LogicalCPUs
+	FROM sys.dm_os_sys_info
+
+	-- Get the top 10 expensive Queries
+	SELECT TOP 10
+			DB_NAME(t.dbid) as 'Database Name'
+		,	CASE 
+				WHEN OBJECT_NAME(qp.objectid) IS NULL THEN 'Adhoc Query' 
+				ELSE OBJECT_NAME(qp.objectid) 
+			END AS 'Object Name'
+		,	CONVERT(varchar, qs.creation_time, 109) as Plan_Compiled_On
+		,	qs.execution_count as 'Total # Of Executions'
+		,	qs.total_worker_time as 'Overall CPU Time After Compiled'
+		,	CONVERT(Varchar, qs.last_execution_time, 109) as 'Last Execution Date/Time'
+		,	CAST(qs.last_worker_time as varchar) +'   (Max '+ cast(qs.max_worker_time as Varchar)+' )' as 'Current vs Max Execution Time (Milliseconds)'
+		,	CONVERT(varchar,(qs.last_worker_time/(1000))/(60*60)) + ' Hrs (i.e. ' + convert(varchar,(qs.last_worker_time/(1000))/60) + ' Mins & ' + convert(varchar,(qs.last_worker_time/(1000))%60) + ' Seconds)' as 'Last Execution Duration'
+		,	qs.last_rows as 'Rows returned'
+		,	qs.total_logical_reads/128 as 'Overall Logical Reads (MB)'
+		,	qs.max_logical_reads/128 'Highest Logical Reads (MB)'
+		,	qs.last_logical_reads/128 'Logical Reads from Last Execution (MB)'
+		,	qs.total_physical_reads/128 'Total Physical Reads Since Compiled (MB)'
+		,	qs.last_dop as 'Last DOP used'
+		,	qs.last_physical_reads/128 'Physical Reads from Last Execution (MB)'
+		,	t.[text] 'Query Text'
+		,	qp.query_plan as 'Query Execution Plan'
+		,	t.encrypted as 'Is Query Encrypted'
+		--qs.plan_handle --Uncomment this if you want query plan handle
+	FROM sys.dm_exec_query_stats qs 
+	CROSS APPLY sys.dm_exec_sql_text(plan_handle) AS t
+	CROSS APPLY sys.dm_exec_query_plan(plan_handle) AS qp
+	ORDER BY qs.last_worker_time DESC
+	
+	-- Get execution plan 
+	SELECT	PLAN_HANDLE
+		,	ST.TEXT
+		,	OBJECT_NAME(ST.objectid) Object_Names
+		,	size_in_bytes
+		,	usecounts
+		,	DB_NAME(ST.dbid)
+		,	ST.dbid
+	FROM SYS.DM_EXEC_CACHED_PLANS
+	   CROSS APPLY SYS.DM_EXEC_SQL_TEXT(PLAN_HANDLE) AS ST
+	WHERE DB_NAME(ST.dbid) NOT IN ('master','msdb')
+	ORDER BY size_in_bytes DESC,usecounts DESC,DB_NAME(ST.dbid) 
+
+	-- Clearing all cache plans without logging the messages in error log
+
+	--DBCC FREEPROCCACHE WITH NO_INFOMSGS
+	--GO
+
+	/*
+	-- Clearing all cache plans with logging the messages in error log
+	DBCC FREEPROCCACHE
+	GO
+
+	*/
