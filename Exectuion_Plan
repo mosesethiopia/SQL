@@ -1,4 +1,154 @@
+	--Get Server Info
+	SELECT	SERVERPROPERTY('MachineName') AS Host
+		,	SERVERPROPERTY('InstanceName') AS Instance
+		,	SERVERPROPERTY('Edition')	AS Edition
+		,	SERVERPROPERTY('ProductVersion') AS ProductVersion
+		,	SERVERPROPERTY('ProductLevel') AS ProductLevel
+		,	CASE SERVERPROPERTY('IsClustered') 
+				WHEN 1 THEN 'Clustered'
+				ELSE 'Stand Alone' 
+			END AS ServerType 
+		,	SERVERPROPERTY('ResourceLastUpdateDateTime') AS [Last Update Time]
+		,	SERVERPROPERTY('LicenseType') AS LicenseType	
 
+	--Get Configuration Settings
+	SELECT	C.name			AS Config_Name
+		,	C.value			AS Value
+		,	C.minimum		AS Allowed_Min_Value
+		,	C.maximum		AS Allowed_Max_Value
+		,	C.value_in_use	AS Value_In_Use
+		,	C.is_dynamic	AS IS_Dynamic
+		,	C.is_advanced	AS IS_Advanced
+		,	C.description	AS Description
+	FROM sys.configurations AS C
+	ORDER BY IS_Advanced DESC,C.name
+
+
+	--Get Admin Logins
+	SELECT S.name
+		, S.denylogin
+		, S.isntname
+		, S.isntgroup
+		, S.isntuser
+	FROM master.dbo.syslogins AS S
+	WHERE	S.sysadmin = 1 
+		OR 
+			S.securityadmin = 1
+
+	--Get taces that are enabled globally
+	--DBCC TRACESTATUS(-1);
+
+	--Get taces that are at server level
+	--DBCC TRACESTATUS();
+
+	--Get List of Databases and 
+	SELECT	D.name
+		,	D.compatibility_level
+		,	D.recovery_model_desc
+		,	D.state_desc
+		,	D.create_date
+		,	D.user_access_desc
+		,	SUSER_SNAME(D.owner_sid) AS DB_Owner
+	FROM sys.databases AS D
+	
+
+	SELECT DB_NAME(MF.database_id) AS DB_Name
+		,	MF.name
+		,	CASE 
+				WHEN MF.max_size = 0 THEN 'NO Growth Allowed'
+				WHEN MF.max_size = -1 THEN 'Growth Until Desk is Full'
+				WHEN MF.max_size = 268435456 THEN 'Log File grow to 2 TB'
+				ELSE CAST(MF.max_size AS varchar(25))
+			END Allow_Growth
+		,	MF.size
+		,	CASE 
+				WHEN MF.growth = 0	THEN CAST(MF.growth AS varchar(5)) + '% -No Growth %'
+				WHEN MF.growth > 0  THEN CAST(MF.growth AS varchar(5)) + '% -Automatically'
+				ELSE CAST(MF.growth AS varchar(5))
+			END Growth_Prec
+		,	MF.type_desc
+		,	MF.physical_name
+	FROM sys.master_files AS MF
+	ORDER BY MF.size
+
+
+	IF OBJECT_ID('tempdb..#temp') IS NOT NULL
+			DROP TABLE #temp 
+	 GO
+     
+	 CREATE TABLE #temp
+		(
+					name varchar(25)
+				,	data_space_id bigint 
+				,	type varchar(25)
+				,	type_desc varchar(50)
+				,	is_default bit
+				,	is_system bit 
+				,	filegroup_guid uniqueidentifier 
+				,	log_filegroup_id int 
+				,	is_read_only bit  
+		)
+	
+	DECLARE @command varchar(500)
+	
+	SET @command= N'USE [?]
+			INSERT INTO #temp
+	        (
+	          name,
+	          data_space_id,
+	          type,
+	          type_desc,
+	          is_default,
+	          is_system,
+	          filegroup_guid,
+	          log_filegroup_id,
+	          is_read_only 
+			 )
+		SELECT * FROM sys.filegroups
+		 '
+	EXECUTE master.dbo.sp_MSforeachdb @command
+
+	SELECT * FROM #temp AS T
+
+	EXEC sys.sp_who2 @loginame = NULL -- sysname
+	
+	EXEC sys.sp_who @loginame = NULL -- sysname
+	
+	DECLARE @Detail CHAR(1) 
+	
+	SET @Detail = 'Y' 
+	
+	IF OBJECT_ID('tempdb..#tmp_replcationInfo') IS NOT NULL
+		DROP TABLE #tmp_replcationInfo
+	GO
+    
+	CREATE TABLE #tmp_replcationInfo 
+	( 
+			PublisherDB VARCHAR(128)
+		,	PublisherName VARCHAR(128)
+		,	TableName VARCHAR(128)
+		,	SubscriberServerName VARCHAR(128)
+	) 
+	
+	EXEC sp_msforeachdb  
+	'USE ?; 
+		IF DATABASEPROPERTYEX ( db_name() , ''IsPublished'' ) = 1 
+			INSERT INTO #tmp_replcationInfo 
+		SELECT  DB_NAME() PublisherDB
+			,	sp.name as PublisherName
+			,	sa.name as TableName
+			,	UPPER(srv.srvname) as SubscriberServerName
+		FROM dbo.syspublications sp  
+		JOIN dbo.sysarticles sa on sp.pubid = sa.pubid 
+		JOIN dbo.syssubscriptions s on sa.artid = s.artid 
+		JOIN master.dbo.sysservers srv on s.srvid = srv.srvid 
+	' 
+	SELECT * FROM #tmp_replcationInfo 
+
+	EXEC sp_help
+
+
+	
 	-- Get the # of CPUs
 	SELECT	(cpu_count / hyperthread_ratio) AS Number_of_PhysicalCPUs
 		,	CPU_Count AS Number_of_LogicalCPUs
