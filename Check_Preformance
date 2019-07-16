@@ -1,0 +1,99 @@
+	EXEC master.dbo.xp_servicecontrol 'QUERYSTATE','MSSQLSERVER'
+	EXEC master.dbo.xp_servicecontrol 'QUERYSTATE','SQLSERVERAGENT'
+	EXEC master.dbo.xp_servicecontrol 'QUERYSTATE','SQLBROWSER'
+
+
+	SELECT	DISTINCT z.[Job Name]
+		,	z.Job_Status
+		,	z.[Start Date Time]
+	FROM 
+	(
+		SELECT	CASE 
+					WHEN SH.run_status =1 THEN 'Successful'
+					ELSE 'Failed'
+				END Job_Status
+			,	CAST(S.name AS varchar(100)) AS 'Job Name'
+			--,	CAST(SJ.step_id AS varchar(5)) AS 'Step ID'
+			--,	CAST(SJ.step_name AS varchar(30)) AS 'Step Name'
+			,	CAST(REPLACE(CONVERT(varchar,CONVERT(datetime,CONVERT(varchar,SH.run_date)),102),'.','-')+' '+SUBSTRING(RIGHT('000000'+CONVERT(varchar,SH.run_time),6),1,2)+':'+SUBSTRING(RIGHT('000000'+CONVERT(varchar,SH.run_time),6),3,2)+':'+SUBSTRING(RIGHT('000000'+CONVERT(varchar,SH.run_time),6),5,2) as varchar(30)) 'Start Date Time'
+			,	SH.message as 'Message'
+			,	RANK() OVER (PARTITION BY S.name,SH.run_status ORDER BY SH.run_date+SH.run_time DESC) ranks
+		FROM	msdb.dbo.sysjobs AS S
+		--JOIN	msdb.dbo.sysjobsteps AS SJ ON S.job_id = SJ.job_id
+		JOIN	msdb.dbo.sysjobhistory AS SH ON S.job_id = SH.job_id --and SJ.step_id = SH.step_id
+		--WHERE SH.run_status <> 1
+		--  AND CAST(SH.run_date as float)*1000000+ SH.run_time > 
+		--	  CAST(CONVERT(varchar(8), GETDATE()-1, 112) as float)*1000000+70000 --yesterday at 7am
+	) z
+	WHERE z.ranks = 1
+
+
+	DECLARE @Time_Start datetime
+	DECLARE @Time_End datetime
+	SET @Time_Start=DATEADD(DAY,-1,GETDATE())
+	SET @Time_End=GETDATE()
+
+	CREATE TABLE #ErrorLog 
+		(		logdate datetime
+			,	processinfo varchar(255)
+            , Message varchar(500)
+		)
+
+	INSERT #ErrorLog (logdate, processinfo, Message)
+	EXEC master.dbo.xp_readerrorlog 0, 1, null, null , @Time_Start, @Time_End, N'desc';
+	
+	-- Filter the temporary table
+	SELECT LogDate, Message FROM #ErrorLog
+	WHERE (Message LIKE '%error%' OR Message LIKE '%failed%') 
+		AND processinfo NOT LIKE 'logon'
+	ORDER BY logdate DESC
+	-- Drop the temporary table 
+	DROP TABLE #ErrorLog
+
+	-- Checking Free Disk Spaces
+	EXEC master.dbo.xp_fixeddrives
+
+	--Checking Server memory for SQL Server
+	SELECT	available_physical_memory_kb/1024 as 'Total Memory MB'
+		,	available_physical_memory_kb/(total_physical_memory_kb*1.0)*100 AS '% Memory Free'
+	FROM sys.dm_os_sys_memory
+
+	-- Check Query for Tuning
+	SELECT TOP 10 text AS 'SQL Statement'
+		,	last_execution_time AS 'Last Execution Time'
+		,	(total_logical_reads+total_physical_reads+total_logical_writes)/execution_count as [Average IO]
+		,	(total_worker_time/execution_count)/1000000.0 as [Average CPU Time (sec)]
+		,	(total_elapsed_time/execution_count)/1000000.0 as [Average Elapsed Time (sec)]
+		,	execution_count AS 'Execution Count'
+		,	qp.query_plan AS 'Query Plan'
+	FROM sys.dm_exec_query_stats qs
+	CROSS APPLY sys.dm_exec_sql_text(qs.plan_handle) st
+	CROSS APPLY sys.dm_exec_query_plan(qs.plan_handle) qp
+	ORDER BY total_elapsed_time/execution_count DESC
+    
+	--Check Number of Requests
+	SELECT	spid
+		,	kpid
+		,	blocked
+		,	d.name AS DataBaseName
+		,	open_tran
+		,	status
+		,	hostname
+		,	S.cmd
+		,	S.waitresource
+		,	login_time
+		,	loginame
+		,	S.hostname
+		,	net_library
+	FROM sys.sysprocesses AS S
+	INNER JOIN sys.databases AS D  ON S.dbid=d.database_id
+
+	--Determines Busy server for any 100o/sec
+	DECLARE @BRPS BIGINT
+	SELECT @BRPS=cntr_value 
+	FROM sys.dm_os_performance_counters
+	WHERE counter_name LIKE 'Batch Requests/sec%'
+	WAITFOR DELAY '000:00:10'
+	SELECT (cntr_value-@BRPS)/10.0 AS "Batch Requests/sec"
+	FROM sys.dm_os_performance_counters
+	WHERE counter_name LIKE 'Batch Requests/sec%'
