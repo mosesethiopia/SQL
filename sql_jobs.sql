@@ -5,6 +5,26 @@ DECLARE @is_active bit
 
 SELECT @is_active = 1, @with_steps = 0, @isAR = 'Job Names Like'
 
+SELECT 'Job Time'
+SELECT	J.name job_name
+	,	J.enabled job_enabled
+	,	sysschedules.name schedule_name
+	,	sysschedules.freq_recurrence_factor
+	,	CASE
+			WHEN freq_subday_type = 2 then ' every ' + CAST(freq_subday_interval AS varchar(7)) + ' seconds' + ' starting at '+ STUFF(STUFF(RIGHT(REPLICATE('0', 6) +  CAST(active_start_time as varchar(6)), 6), 3, 0, ':'), 6, 0, ':')
+			WHEN freq_subday_type = 4 then ' every ' + cast(freq_subday_interval as varchar(7)) + ' minutes' + ' starting at '+ stuff(stuff(RIGHT(replicate('0', 6) +  cast(active_start_time as varchar(6)), 6), 3, 0, ':'), 6, 0, ':')
+			WHEN freq_subday_type = 8 then ' every ' + cast(freq_subday_interval as varchar(7)) + ' hours'   + ' starting at '+ stuff(stuff(RIGHT(replicate('0', 6) +  cast(active_start_time as varchar(6)), 6), 3, 0, ':'), 6, 0, ':')
+			ELSE ' starting at ' + STUFF(STUFF(RIGHT(replicate('0', 6) +  CAST(active_start_time as varchar(6)), 6), 3, 0, ':'), 6, 0, ':')
+		END time
+	,	CASE
+		WHEN freq_type = 4 THEN 'Daily'	END frequency
+	,	'every ' + cast (freq_interval as varchar(3)) + ' day(s)'  Days
+FROM msdb.dbo.sysjobs AS J
+JOIN msdb.dbo.sysjobschedules on j.job_id = sysjobschedules.job_id
+JOIN msdb.dbo.sysschedules on sysjobschedules.schedule_id = sysschedules.schedule_id
+WHERE freq_type = 4
+ORDER BY time
+		
 SELECT	DISTINCT JO.name as 'JobName'
 	,	HJ.run_date
 	,	run_time
