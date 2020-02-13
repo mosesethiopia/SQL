@@ -1,0 +1,13 @@
+	SELECT   IRS.pid
+        ,    IRS.minor_cat_counts AS minor_counts
+        ,    IRS.dep_counts AS dependent_counts
+    FROM 
+    (
+        SELECT COUNT(*) OVER (PARTITION BY ORE.pid) dep_counts
+            , ORE.pid
+            , COUNT(*) OVER (PARTITION BY ORE.student_id,CASE WHEN DATEADD(YEAR,18,ORE.dob) > GETDATE() THEN 1 ELSE 0 END) minor_cat_counts
+            , ORE.dob
+        FROM dbo.person AS ORE
+    ) AS IRS
+    WHERE CASE WHEN IRS.dob <= DATEADD(YEAR,-18,GETDATE()) THEN 1 ELSE 0 END=0
+    
